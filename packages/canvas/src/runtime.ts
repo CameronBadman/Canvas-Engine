@@ -1,0 +1,281 @@
+import { WasmCanvasRuntime } from "@canvas-engine/core-wasm";
+import { defaultRenderers } from "./renderers";
+import type {
+  ApplyResult,
+  CanvasMutation,
+  CanvasRuntime,
+  CanvasRuntimeEvent,
+  CanvasTool,
+  CreateCanvasRuntimeOptions,
+  CreatePathInput,
+  CreateRectInput,
+  ObjectRenderer,
+  Point,
+  RenderObject,
+  Style,
+  Transform,
+  TransformObjectInput,
+} from "./types";
+
+const DEFAULT_STYLE: Style = {
+  fill: "#a7f3d0",
+  stroke: "#064e3b",
+  stroke_width: 2,
+};
+
+const DEFAULT_PATH_STYLE: Style = {
+  fill: null,
+  stroke: "#1f2937",
+  stroke_width: 3,
+};
+
+function parseJson<T>(json: string): T {
+  return JSON.parse(json) as T;
+}
+
+function stringify(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function mergeStyle(base: Style, input?: Partial<Style>): Style {
+  return {
+    fill: input?.fill ?? base.fill ?? null,
+    stroke: input?.stroke ?? base.stroke ?? null,
+    stroke_width: input?.stroke_width ?? base.stroke_width,
+  };
+}
+
+function defaultTransform(x = 0, y = 0): Transform {
+  return {
+    x,
+    y,
+    rotation: 0,
+    scale_x: 1,
+    scale_y: 1,
+  };
+}
+
+function canvasPoint(canvas: HTMLCanvasElement, event: PointerEvent): Point {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return {
+    x: (event.clientX - rect.left) * scaleX,
+    y: (event.clientY - rect.top) * scaleY,
+  };
+}
+
+export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): CanvasRuntime {
+  const ctx = options.canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Canvas2D context is not available");
+  }
+
+  const wasm = new WasmCanvasRuntime(options.documentId, options.actorId);
+  const renderers: Record<string, ObjectRenderer> = {
+    ...defaultRenderers,
+    ...options.renderers,
+  };
+  let destroyed = false;
+  let tool: CanvasTool = options.initialTool ?? "none";
+  let dragStart: Point | null = null;
+  let pathPoints: Point[] = [];
+
+  const emitRuntimeEvent = (event: CanvasRuntimeEvent): void => {
+    options.onRuntimeEvent?.(event);
+  };
+
+  const encodeMutation = (mutation: CanvasMutation): Uint8Array =>
+    wasm.encode_mutation_json_to_binary(stringify(mutation));
+
+  const emitLocalMutation = (mutation: CanvasMutation): void => {
+    options.onMutation?.(mutation, encodeMutation(mutation));
+  };
+
+  const render = (): void => {
+    const objects = parseJson<RenderObject[]>(wasm.get_render_objects_json());
+    ctx.clearRect(0, 0, options.canvas.width, options.canvas.height);
+    for (const object of objects) {
+      const renderer = renderers[object.renderer_key];
+      if (renderer) {
+        renderer(ctx, object);
+      }
+    }
+    emitRuntimeEvent({ type: "rendered", objectCount: objects.length });
+  };
+
+  const applyMutation = (mutation: CanvasMutation): ApplyResult => {
+    const result = parseJson<ApplyResult>(wasm.apply_mutation_json(stringify(mutation)));
+    render();
+    emitRuntimeEvent({ type: "mutation-applied", result, source: "remote" });
+    return result;
+  };
+
+  const applyMutationBinary = (bytes: Uint8Array): ApplyResult => {
+    const resultBytes = wasm.apply_mutation_binary(bytes);
+    const result = parseJson<ApplyResult>(wasm.decode_apply_result_binary_to_json(resultBytes));
+    render();
+    emitRuntimeEvent({ type: "mutation-applied", result, source: "remote" });
+    return result;
+  };
+
+  const createRect = (input: CreateRectInput): CanvasMutation => {
+    const mutation = parseJson<CanvasMutation>(
+      wasm.create_object_json(
+        stringify({
+          object_id: input.objectId ?? null,
+          object_kind: "shape",
+          renderer_key: "core.rect",
+          transform: defaultTransform(input.x, input.y),
+          geometry: { Rect: { width: input.width, height: input.height } },
+          style: mergeStyle(DEFAULT_STYLE, input.style),
+          metadata: input.metadata ?? null,
+        }),
+      ),
+    );
+    render();
+    emitLocalMutation(mutation);
+    emitRuntimeEvent({
+      type: "mutation-applied",
+      result: {
+        applied: true,
+        duplicate: false,
+        document_id: mutation.document_id,
+        event_id: mutation.event_id,
+        lamport_clock: mutation.lamport,
+        target_object_id: mutation.target_object_id,
+        message: "local object created",
+      },
+      source: "local",
+    });
+    return mutation;
+  };
+
+  const createPath = (input: CreatePathInput): CanvasMutation => {
+    const mutation = parseJson<CanvasMutation>(
+      wasm.create_object_json(
+        stringify({
+          object_id: input.objectId ?? null,
+          object_kind: "path",
+          renderer_key: "core.path",
+          transform: defaultTransform(),
+          geometry: { Path: { points: input.points } },
+          style: mergeStyle(DEFAULT_PATH_STYLE, input.style),
+          metadata: input.metadata ?? null,
+        }),
+      ),
+    );
+    render();
+    emitLocalMutation(mutation);
+    emitRuntimeEvent({
+      type: "mutation-applied",
+      result: {
+        applied: true,
+        duplicate: false,
+        document_id: mutation.document_id,
+        event_id: mutation.event_id,
+        lamport_clock: mutation.lamport,
+        target_object_id: mutation.target_object_id,
+        message: "local path created",
+      },
+      source: "local",
+    });
+    return mutation;
+  };
+
+  const transformObject = (input: TransformObjectInput): CanvasMutation => {
+    const mutation = parseJson<CanvasMutation>(
+      wasm.transform_object_json(
+        stringify({
+          object_id: input.objectId,
+          transform: input.transform,
+        }),
+      ),
+    );
+    render();
+    emitLocalMutation(mutation);
+    return mutation;
+  };
+
+  const deleteObject = (objectId: string): CanvasMutation => {
+    const mutation = parseJson<CanvasMutation>(wasm.delete_object(objectId));
+    render();
+    emitLocalMutation(mutation);
+    return mutation;
+  };
+
+  const onPointerDown = (event: PointerEvent): void => {
+    if (destroyed || tool === "none") return;
+    options.canvas.setPointerCapture(event.pointerId);
+    const point = canvasPoint(options.canvas, event);
+    if (tool === "rect") {
+      dragStart = point;
+    } else if (tool === "pen") {
+      pathPoints = [point];
+    }
+  };
+
+  const onPointerMove = (event: PointerEvent): void => {
+    if (destroyed || tool !== "pen" || pathPoints.length === 0) return;
+    pathPoints.push(canvasPoint(options.canvas, event));
+  };
+
+  const onPointerUp = (event: PointerEvent): void => {
+    if (destroyed) return;
+    const point = canvasPoint(options.canvas, event);
+    if (tool === "rect" && dragStart) {
+      const x = Math.min(dragStart.x, point.x);
+      const y = Math.min(dragStart.y, point.y);
+      const width = Math.abs(point.x - dragStart.x);
+      const height = Math.abs(point.y - dragStart.y);
+      if (width >= 3 && height >= 3) {
+        createRect({ x, y, width, height });
+      }
+      dragStart = null;
+    } else if (tool === "pen" && pathPoints.length > 1) {
+      pathPoints.push(point);
+      createPath({ points: pathPoints });
+      pathPoints = [];
+    }
+    options.canvas.releasePointerCapture(event.pointerId);
+  };
+
+  options.canvas.style.touchAction = "none";
+  options.canvas.addEventListener("pointerdown", onPointerDown);
+  options.canvas.addEventListener("pointermove", onPointerMove);
+  options.canvas.addEventListener("pointerup", onPointerUp);
+  options.canvas.addEventListener("pointercancel", onPointerUp);
+
+  render();
+
+  return {
+    applyMutation,
+    applyMutationBinary,
+    createRect,
+    createPath,
+    transformObject,
+    deleteObject,
+    render,
+    getSnapshot: () => wasm.get_snapshot_binary(),
+    loadSnapshot: (bytes) => {
+      wasm.load_snapshot_binary(bytes);
+      render();
+    },
+    exportDocumentJson: () => parseJson<unknown>(wasm.export_document_json()),
+    setTool: (nextTool) => {
+      tool = nextTool;
+      emitRuntimeEvent({ type: "tool-changed", tool });
+    },
+    getTool: () => tool,
+    destroy: () => {
+      if (destroyed) return;
+      destroyed = true;
+      options.canvas.removeEventListener("pointerdown", onPointerDown);
+      options.canvas.removeEventListener("pointermove", onPointerMove);
+      options.canvas.removeEventListener("pointerup", onPointerUp);
+      options.canvas.removeEventListener("pointercancel", onPointerUp);
+      wasm.free();
+      emitRuntimeEvent({ type: "destroyed" });
+    },
+  };
+}
