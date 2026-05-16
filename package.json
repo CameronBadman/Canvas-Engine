@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "pnpm --filter @canvas-engine/core-wasm build && pnpm --filter @canvas-engine/canvas build && pnpm --filter @canvas-engine/react build && pnpm --filter ./examples/basic build && pnpm --filter ./examples/collab-mock build",
-    "dev:basic": "pnpm --filter ./examples/basic dev",
-    "dev:collab": "pnpm --filter ./examples/collab-mock dev",
-    "test": "pnpm --filter @canvas-engine/core-wasm test && pnpm --filter @canvas-engine/canvas test"
+    "dev:basic": "pnpm --filter @canvas-engine/core-wasm build && pnpm --filter @canvas-engine/canvas build && pnpm --filter ./examples/basic dev",
+    "dev:collab": "pnpm --filter @canvas-engine/core-wasm build && pnpm --filter @canvas-engine/canvas build && pnpm --filter ./examples/collab-mock dev",
+    "test": "pnpm --filter @canvas-engine/core-wasm test && pnpm --filter @canvas-engine/core-wasm build && pnpm --filter @canvas-engine/canvas test"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
