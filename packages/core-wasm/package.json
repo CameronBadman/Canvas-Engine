@@ -1,0 +1,20 @@
+{
+  "name": "@canvas-engine/core-wasm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": ["pkg"],
+  "main": "pkg/core_wasm.js",
+  "module": "pkg/core_wasm.js",
+  "types": "pkg/core_wasm.d.ts",
+  "exports": {
+    ".": {
+      "types": "./pkg/core_wasm.d.ts",
+      "default": "./pkg/core_wasm.js"
+    }
+  },
+  "scripts": {
+    "build": "wasm-pack build --target bundler --out-dir pkg --scope canvas-engine",
+    "test": "cargo test"
+  }
+}

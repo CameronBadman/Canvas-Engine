@@ -1,0 +1,10 @@
+node_modules/
+dist/
+target/
+pkg/
+.turbo/
+.vite/
+*.tsbuildinfo
+result
+result-*
+.DS_Store
