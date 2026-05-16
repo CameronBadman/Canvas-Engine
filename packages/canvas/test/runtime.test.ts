@@ -9,6 +9,14 @@ function canvas(): HTMLCanvasElement {
   return element;
 }
 
+function pointerEvent(type: string, x: number, y: number): Event {
+  return new MouseEvent(type, {
+    clientX: x,
+    clientY: y,
+    bubbles: true,
+  }) as Event;
+}
+
 describe("createCanvasRuntime", () => {
   it("emits local mutations through the callback", () => {
     const emitted: Array<{ mutation: CanvasMutation; binary: Uint8Array }> = [];
@@ -78,5 +86,30 @@ describe("createCanvasRuntime", () => {
     expect(second.duplicate).toBe(true);
     source.destroy();
     target.destroy();
+  });
+
+  it("previews pen strokes but emits only when the pointer is released", () => {
+    const emitted: CanvasMutation[] = [];
+    const element = canvas();
+    const runtime = createCanvasRuntime({
+      canvas: element,
+      documentId: "doc-pen",
+      actorId: "actor-a",
+      initialTool: "pen",
+      onMutation: (mutation) => emitted.push(mutation),
+    });
+
+    element.dispatchEvent(pointerEvent("pointerdown", 10, 10));
+    element.dispatchEvent(pointerEvent("pointermove", 20, 20));
+    element.dispatchEvent(pointerEvent("pointermove", 30, 25));
+
+    expect(emitted).toHaveLength(0);
+
+    element.dispatchEvent(pointerEvent("pointerup", 40, 30));
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.event_type).toBe("object.created");
+    expect(emitted[0]!.payload.object?.renderer_key).toBe("core.path");
+    runtime.destroy();
   });
 });

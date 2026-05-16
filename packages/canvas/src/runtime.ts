@@ -92,7 +92,24 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
     options.onMutation?.(mutation, encodeMutation(mutation));
   };
 
-  const render = (): void => {
+  const drawDraftPath = (): void => {
+    if (pathPoints.length < 2) return;
+    ctx.save();
+    ctx.strokeStyle = DEFAULT_PATH_STYLE.stroke ?? "#1f2937";
+    ctx.lineWidth = DEFAULT_PATH_STYLE.stroke_width;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.globalAlpha = 0.75;
+    ctx.beginPath();
+    ctx.moveTo(pathPoints[0]!.x, pathPoints[0]!.y);
+    for (const point of pathPoints.slice(1)) {
+      ctx.lineTo(point.x, point.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  const redraw = (emitRenderedEvent: boolean): void => {
     const objects = parseJson<RenderObject[]>(wasm.get_render_objects_json());
     ctx.clearRect(0, 0, options.canvas.width, options.canvas.height);
     for (const object of objects) {
@@ -101,7 +118,14 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
         renderer(ctx, object);
       }
     }
-    emitRuntimeEvent({ type: "rendered", objectCount: objects.length });
+    drawDraftPath();
+    if (emitRenderedEvent) {
+      emitRuntimeEvent({ type: "rendered", objectCount: objects.length });
+    }
+  };
+
+  const render = (): void => {
+    redraw(true);
   };
 
   const applyMutation = (mutation: CanvasMutation): ApplyResult => {
@@ -212,12 +236,14 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
       dragStart = point;
     } else if (tool === "pen") {
       pathPoints = [point];
+      redraw(false);
     }
   };
 
   const onPointerMove = (event: PointerEvent): void => {
     if (destroyed || tool !== "pen" || pathPoints.length === 0) return;
     pathPoints.push(canvasPoint(options.canvas, event));
+    redraw(false);
   };
 
   const onPointerUp = (event: PointerEvent): void => {
@@ -234,8 +260,12 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
       dragStart = null;
     } else if (tool === "pen" && pathPoints.length > 1) {
       pathPoints.push(point);
-      createPath({ points: pathPoints });
+      const completedPath = pathPoints;
       pathPoints = [];
+      createPath({ points: completedPath });
+    } else if (tool === "pen") {
+      pathPoints = [];
+      redraw(false);
     }
     options.canvas.releasePointerCapture(event.pointerId);
   };

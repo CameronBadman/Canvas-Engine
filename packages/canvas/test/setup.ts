@@ -20,6 +20,7 @@ const context = {
   set lineWidth(_value: number) {},
   set lineCap(_value: CanvasLineCap) {},
   set lineJoin(_value: CanvasLineJoin) {},
+  set globalAlpha(_value: number) {},
 };
 
 HTMLCanvasElement.prototype.getContext = function getContext() {
@@ -28,3 +29,16 @@ HTMLCanvasElement.prototype.getContext = function getContext() {
 
 HTMLCanvasElement.prototype.setPointerCapture = noop;
 HTMLCanvasElement.prototype.releasePointerCapture = noop;
+HTMLCanvasElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+  return {
+    x: 0,
+    y: 0,
+    top: 0,
+    left: 0,
+    right: this.width,
+    bottom: this.height,
+    width: this.width,
+    height: this.height,
+    toJSON: () => ({}),
+  };
+};
