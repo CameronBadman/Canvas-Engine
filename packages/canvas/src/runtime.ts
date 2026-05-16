@@ -35,6 +35,12 @@ interface ActivePenStroke {
   points: Point[];
 }
 
+interface ActiveRectDrag {
+  pointerId: number;
+  start: Point;
+  current: Point;
+}
+
 interface CanvasSurface {
   logicalWidth: number;
   logicalHeight: number;
@@ -73,6 +79,15 @@ function canvasPoint(canvas: HTMLCanvasElement, surface: CanvasSurface, event: P
   return {
     x: (event.clientX - rect.left) * scaleX,
     y: (event.clientY - rect.top) * scaleY,
+  };
+}
+
+function rectFromPoints(start: Point, current: Point): CreateRectInput {
+  return {
+    x: Math.min(start.x, current.x),
+    y: Math.min(start.y, current.y),
+    width: Math.abs(current.x - start.x),
+    height: Math.abs(current.y - start.y),
   };
 }
 
@@ -141,7 +156,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
   };
   let destroyed = false;
   let tool: CanvasTool = options.initialTool ?? "none";
-  let dragStart: Point | null = null;
+  let activeRectDrag: ActiveRectDrag | null = null;
   let activePenStroke: ActivePenStroke | null = null;
 
   const emitRuntimeEvent = (event: CanvasRuntimeEvent): void => {
@@ -169,6 +184,23 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
     ctx.restore();
   };
 
+  const drawDraftRect = (): void => {
+    if (!activeRectDrag) return;
+    const rect = rectFromPoints(activeRectDrag.start, activeRectDrag.current);
+    if (rect.width < 1 || rect.height < 1) return;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(167, 243, 208, 0.28)";
+    ctx.strokeStyle = "#047857";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.rect(rect.x, rect.y, rect.width, rect.height);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  };
+
   const redraw = (emitRenderedEvent: boolean): void => {
     configureCanvasSurface();
     const objects = parseJson<RenderObject[]>(wasm.get_render_objects_json());
@@ -179,6 +211,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
         renderer(ctx, object);
       }
     }
+    drawDraftRect();
     drawDraftPath();
     if (emitRenderedEvent) {
       emitRuntimeEvent({ type: "rendered", objectCount: objects.length });
@@ -295,8 +328,14 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
     const id = pointerId(event);
     const point = canvasPoint(options.canvas, surface, event);
     if (tool === "rect") {
+      if (activeRectDrag) return;
       capturePointer(options.canvas, id);
-      dragStart = point;
+      activeRectDrag = {
+        pointerId: id,
+        start: point,
+        current: point,
+      };
+      redraw(false);
     } else if (tool === "pen") {
       if (activePenStroke) return;
       capturePointer(options.canvas, id);
@@ -309,7 +348,19 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
   };
 
   const onPointerMove = (event: PointerEvent): void => {
-    if (destroyed || tool !== "pen" || !activePenStroke) return;
+    if (destroyed) return;
+
+    if (tool === "rect" && activeRectDrag) {
+      if (pointerId(event) !== activeRectDrag.pointerId) return;
+      activeRectDrag = {
+        ...activeRectDrag,
+        current: canvasPoint(options.canvas, surface, event),
+      };
+      redraw(false);
+      return;
+    }
+
+    if (tool !== "pen" || !activePenStroke) return;
     if (pointerId(event) !== activePenStroke.pointerId) return;
 
     let nextPoints = activePenStroke.points;
@@ -326,15 +377,14 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
     if (destroyed) return;
     const id = pointerId(event);
     const point = canvasPoint(options.canvas, surface, event);
-    if (tool === "rect" && dragStart) {
-      const x = Math.min(dragStart.x, point.x);
-      const y = Math.min(dragStart.y, point.y);
-      const width = Math.abs(point.x - dragStart.x);
-      const height = Math.abs(point.y - dragStart.y);
-      if (width >= 3 && height >= 3) {
-        createRect({ x, y, width, height });
+    if (tool === "rect" && activeRectDrag && id === activeRectDrag.pointerId) {
+      const rect = rectFromPoints(activeRectDrag.start, point);
+      activeRectDrag = null;
+      if (rect.width >= 3 && rect.height >= 3) {
+        createRect(rect);
+      } else {
+        redraw(false);
       }
-      dragStart = null;
       releasePointer(options.canvas, id);
     } else if (tool === "pen" && activePenStroke && id === activePenStroke.pointerId) {
       let completedPath = activePenStroke.points;
@@ -348,12 +398,19 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
   };
 
   const onPointerCancel = (event: PointerEvent): void => {
-    if (tool !== "pen" || !activePenStroke) return;
     const id = pointerId(event);
-    if (id !== activePenStroke.pointerId) return;
-    activePenStroke = null;
-    redraw(false);
-    releasePointer(options.canvas, id);
+    if (tool === "rect" && activeRectDrag && id === activeRectDrag.pointerId) {
+      activeRectDrag = null;
+      redraw(false);
+      releasePointer(options.canvas, id);
+      return;
+    }
+
+    if (tool === "pen" && activePenStroke && id === activePenStroke.pointerId) {
+      activePenStroke = null;
+      redraw(false);
+      releasePointer(options.canvas, id);
+    }
   };
 
   options.canvas.style.touchAction = "none";
@@ -379,6 +436,10 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
     },
     exportDocumentJson: () => parseJson<unknown>(wasm.export_document_json()),
     setTool: (nextTool) => {
+      if (tool === "rect" && nextTool !== "rect" && activeRectDrag) {
+        activeRectDrag = null;
+        redraw(false);
+      }
       if (tool === "pen" && nextTool !== "pen" && activePenStroke) {
         activePenStroke = null;
         redraw(false);

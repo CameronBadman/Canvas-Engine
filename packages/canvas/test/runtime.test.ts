@@ -118,6 +118,98 @@ describe("createCanvasRuntime", () => {
     target.destroy();
   });
 
+  it("previews rect drags but emits only when the pointer is released", () => {
+    const emitted: CanvasMutation[] = [];
+    const element = canvas();
+    const runtime = createCanvasRuntime({
+      canvas: element,
+      documentId: "doc-rect-drag",
+      actorId: "actor-a",
+      initialTool: "rect",
+      onMutation: (mutation) => emitted.push(mutation),
+    });
+
+    element.dispatchEvent(pointerEvent("pointerdown", 80, 90));
+    element.dispatchEvent(pointerEvent("pointermove", 180, 160));
+
+    expect(emitted).toHaveLength(0);
+
+    element.dispatchEvent(pointerEvent("pointerup", 180, 160));
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.event_type).toBe("object.created");
+    expect(emitted[0]!.payload.object?.renderer_key).toBe("core.rect");
+    expect(emitted[0]!.payload.object?.transform).toMatchObject({ x: 80, y: 90 });
+    expect(emitted[0]!.payload.object?.geometry).toEqual({
+      Rect: { width: 100, height: 70 },
+    });
+    runtime.destroy();
+  });
+
+  it("normalizes rect drags from bottom-right to top-left", () => {
+    const emitted: CanvasMutation[] = [];
+    const element = canvas();
+    const runtime = createCanvasRuntime({
+      canvas: element,
+      documentId: "doc-rect-normalized",
+      actorId: "actor-a",
+      initialTool: "rect",
+      onMutation: (mutation) => emitted.push(mutation),
+    });
+
+    element.dispatchEvent(pointerEvent("pointerdown", 180, 160));
+    element.dispatchEvent(pointerEvent("pointerup", 80, 90));
+
+    expect(emitted[0]!.payload.object?.transform).toMatchObject({ x: 80, y: 90 });
+    expect(emitted[0]!.payload.object?.geometry).toEqual({
+      Rect: { width: 100, height: 70 },
+    });
+    runtime.destroy();
+  });
+
+  it("cancels rect drags without emitting a mutation", () => {
+    const emitted: CanvasMutation[] = [];
+    const element = canvas();
+    const runtime = createCanvasRuntime({
+      canvas: element,
+      documentId: "doc-rect-cancel",
+      actorId: "actor-a",
+      initialTool: "rect",
+      onMutation: (mutation) => emitted.push(mutation),
+    });
+
+    element.dispatchEvent(pointerEvent("pointerdown", 20, 30));
+    element.dispatchEvent(pointerEvent("pointermove", 120, 130));
+    element.dispatchEvent(pointerEvent("pointercancel", 120, 130));
+
+    expect(emitted).toHaveLength(0);
+    runtime.destroy();
+  });
+
+  it("keeps rect drags owned by the initial pointer", () => {
+    const emitted: CanvasMutation[] = [];
+    const element = canvas();
+    const runtime = createCanvasRuntime({
+      canvas: element,
+      documentId: "doc-rect-pointer",
+      actorId: "actor-a",
+      initialTool: "rect",
+      onMutation: (mutation) => emitted.push(mutation),
+    });
+
+    element.dispatchEvent(pointerEvent("pointerdown", 10, 20, { pointerId: 1 }));
+    element.dispatchEvent(pointerEvent("pointermove", 300, 300, { pointerId: 2 }));
+    element.dispatchEvent(pointerEvent("pointermove", 110, 120, { pointerId: 1 }));
+    element.dispatchEvent(pointerEvent("pointerup", 110, 120, { pointerId: 1 }));
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.payload.object?.transform).toMatchObject({ x: 10, y: 20 });
+    expect(emitted[0]!.payload.object?.geometry).toEqual({
+      Rect: { width: 100, height: 100 },
+    });
+    runtime.destroy();
+  });
+
   it("previews pen strokes but emits only when the pointer is released", () => {
     const emitted: CanvasMutation[] = [];
     const element = canvas();

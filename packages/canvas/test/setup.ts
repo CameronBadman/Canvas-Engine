@@ -15,6 +15,7 @@ const context = {
   save: noop,
   scale: noop,
   setTransform: noop,
+  setLineDash: noop,
   stroke: noop,
   translate: noop,
   set fillStyle(_value: string) {},
