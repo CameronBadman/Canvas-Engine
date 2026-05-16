@@ -2,6 +2,7 @@ import type { Point } from "./types";
 
 const MIN_POINT_DISTANCE = 2;
 const SIMPLIFY_TOLERANCE = 1.4;
+const DOT_SIZE = 0.25;
 
 function distance(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -56,6 +57,19 @@ export function normalizePathPoints(points: Point[]): Point[] {
     return filtered;
   }
   return ramerDouglasPeucker(filtered, SIMPLIFY_TOLERANCE);
+}
+
+export function finalizePathPoints(points: Point[]): Point[] {
+  const normalized = normalizePathPoints(points);
+  if (normalized.length !== 1) {
+    return normalized;
+  }
+
+  const point = normalized[0]!;
+  return [
+    { x: point.x - DOT_SIZE, y: point.y },
+    { x: point.x + DOT_SIZE, y: point.y },
+  ];
 }
 
 export function drawSmoothPath(ctx: CanvasRenderingContext2D, points: Point[]): void {

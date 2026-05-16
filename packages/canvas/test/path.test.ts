@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendPathPoint, normalizePathPoints } from "../src/path";
+import { appendPathPoint, finalizePathPoints, normalizePathPoints } from "../src/path";
 
 describe("path utilities", () => {
   it("ignores tiny pointer samples while appending", () => {
@@ -22,5 +22,14 @@ describe("path utilities", () => {
     expect(points.length).toBeLessThan(6);
     expect(points[0]).toEqual({ x: 0, y: 0 });
     expect(points.at(-1)).toEqual({ x: 40, y: 0 });
+  });
+
+  it("turns a single pen tap into a drawable dot path", () => {
+    const points = finalizePathPoints([{ x: 20, y: 30 }]);
+
+    expect(points).toEqual([
+      { x: 19.75, y: 30 },
+      { x: 20.25, y: 30 },
+    ]);
   });
 });

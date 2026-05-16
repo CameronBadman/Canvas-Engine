@@ -9,12 +9,31 @@ function canvas(): HTMLCanvasElement {
   return element;
 }
 
-function pointerEvent(type: string, x: number, y: number): Event {
-  return new MouseEvent(type, {
+function pointerEvent(
+  type: string,
+  x: number,
+  y: number,
+  options: {
+    pointerId?: number;
+    isPrimary?: boolean;
+    coalesced?: Array<{ x: number; y: number }>;
+  } = {},
+): Event {
+  const event = new MouseEvent(type, {
     clientX: x,
     clientY: y,
     bubbles: true,
-  }) as Event;
+  });
+  Object.defineProperties(event, {
+    pointerId: { value: options.pointerId ?? 1 },
+    isPrimary: { value: options.isPrimary ?? true },
+    getCoalescedEvents: {
+      value: options.coalesced
+        ? () => options.coalesced!.map((point) => pointerEvent(type, point.x, point.y, options))
+        : undefined,
+    },
+  });
+  return event;
 }
 
 describe("createCanvasRuntime", () => {
@@ -116,6 +135,117 @@ describe("createCanvasRuntime", () => {
           { x: 10, y: 10 },
           { x: 20, y: 20 },
           { x: 40, y: 30 },
+        ],
+      },
+    });
+    runtime.destroy();
+  });
+
+  it("commits a pen tap as a small dot path", () => {
+    const emitted: CanvasMutation[] = [];
+    const element = canvas();
+    const runtime = createCanvasRuntime({
+      canvas: element,
+      documentId: "doc-pen-dot",
+      actorId: "actor-a",
+      initialTool: "pen",
+      onMutation: (mutation) => emitted.push(mutation),
+    });
+
+    element.dispatchEvent(pointerEvent("pointerdown", 50, 60));
+    element.dispatchEvent(pointerEvent("pointerup", 50, 60));
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.payload.object?.geometry).toEqual({
+      Path: {
+        points: [
+          { x: 49.75, y: 60 },
+          { x: 50.25, y: 60 },
+        ],
+      },
+    });
+    runtime.destroy();
+  });
+
+  it("cancels pen strokes without emitting a mutation", () => {
+    const emitted: CanvasMutation[] = [];
+    const element = canvas();
+    const runtime = createCanvasRuntime({
+      canvas: element,
+      documentId: "doc-pen-cancel",
+      actorId: "actor-a",
+      initialTool: "pen",
+      onMutation: (mutation) => emitted.push(mutation),
+    });
+
+    element.dispatchEvent(pointerEvent("pointerdown", 10, 10));
+    element.dispatchEvent(pointerEvent("pointermove", 30, 30));
+    element.dispatchEvent(pointerEvent("pointercancel", 30, 30));
+
+    expect(emitted).toHaveLength(0);
+    runtime.destroy();
+  });
+
+  it("keeps pen strokes owned by the initial pointer", () => {
+    const emitted: CanvasMutation[] = [];
+    const element = canvas();
+    const runtime = createCanvasRuntime({
+      canvas: element,
+      documentId: "doc-pen-pointer",
+      actorId: "actor-a",
+      initialTool: "pen",
+      onMutation: (mutation) => emitted.push(mutation),
+    });
+
+    element.dispatchEvent(pointerEvent("pointerdown", 10, 10, { pointerId: 1 }));
+    element.dispatchEvent(pointerEvent("pointermove", 200, 200, { pointerId: 2 }));
+    element.dispatchEvent(pointerEvent("pointermove", 20, 20, { pointerId: 1 }));
+    element.dispatchEvent(pointerEvent("pointerup", 30, 30, { pointerId: 1 }));
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.payload.object?.geometry).toEqual({
+      Path: {
+        points: [
+          { x: 10, y: 10 },
+          { x: 30, y: 30 },
+        ],
+      },
+    });
+    runtime.destroy();
+  });
+
+  it("collects coalesced pen samples before committing", () => {
+    const emitted: CanvasMutation[] = [];
+    const element = canvas();
+    const runtime = createCanvasRuntime({
+      canvas: element,
+      documentId: "doc-pen-coalesced",
+      actorId: "actor-a",
+      initialTool: "pen",
+      onMutation: (mutation) => emitted.push(mutation),
+    });
+
+    element.dispatchEvent(pointerEvent("pointerdown", 0, 0));
+    element.dispatchEvent(
+      pointerEvent("pointermove", 20, 20, {
+        coalesced: [
+          { x: 8, y: 18 },
+          { x: 16, y: 8 },
+          { x: 24, y: 18 },
+        ],
+      }),
+    );
+    element.dispatchEvent(pointerEvent("pointerup", 32, 0));
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.payload.object?.geometry).toEqual({
+      Path: {
+        points: [
+          { x: 0, y: 0 },
+          { x: 8, y: 18 },
+          { x: 16, y: 8 },
+          { x: 24, y: 18 },
+          { x: 32, y: 0 },
         ],
       },
     });

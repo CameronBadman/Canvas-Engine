@@ -1,5 +1,5 @@
 import { WasmCanvasRuntime } from "@canvas-engine/core-wasm";
-import { appendPathPoint, drawSmoothPath, normalizePathPoints } from "./path";
+import { appendPathPoint, drawSmoothPath, finalizePathPoints } from "./path";
 import { defaultRenderers } from "./renderers";
 import type {
   ApplyResult,
@@ -29,6 +29,11 @@ const DEFAULT_PATH_STYLE: Style = {
   stroke: "#1f2937",
   stroke_width: 3,
 };
+
+interface ActivePenStroke {
+  pointerId: number;
+  points: Point[];
+}
 
 function parseJson<T>(json: string): T {
   return JSON.parse(json) as T;
@@ -66,6 +71,31 @@ function canvasPoint(canvas: HTMLCanvasElement, event: PointerEvent): Point {
   };
 }
 
+function pointerId(event: PointerEvent): number {
+  return Number.isFinite(event.pointerId) ? event.pointerId : 1;
+}
+
+function eventPoints(canvas: HTMLCanvasElement, event: PointerEvent): Point[] {
+  const events = event.getCoalescedEvents?.() ?? [event];
+  return events.map((coalescedEvent) => canvasPoint(canvas, coalescedEvent));
+}
+
+function capturePointer(canvas: HTMLCanvasElement, id: number): void {
+  try {
+    canvas.setPointerCapture(id);
+  } catch {
+    // Pointer capture can fail in tests or if the browser already released it.
+  }
+}
+
+function releasePointer(canvas: HTMLCanvasElement, id: number): void {
+  try {
+    canvas.releasePointerCapture(id);
+  } catch {
+    // Releasing an already-released pointer should not affect runtime state.
+  }
+}
+
 export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): CanvasRuntime {
   const ctx = options.canvas.getContext("2d");
   if (!ctx) {
@@ -80,7 +110,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
   let destroyed = false;
   let tool: CanvasTool = options.initialTool ?? "none";
   let dragStart: Point | null = null;
-  let pathPoints: Point[] = [];
+  let activePenStroke: ActivePenStroke | null = null;
 
   const emitRuntimeEvent = (event: CanvasRuntimeEvent): void => {
     options.onRuntimeEvent?.(event);
@@ -94,7 +124,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
   };
 
   const drawDraftPath = (): void => {
-    if (pathPoints.length < 2) return;
+    if (!activePenStroke || activePenStroke.points.length === 0) return;
     ctx.save();
     ctx.strokeStyle = DEFAULT_PATH_STYLE.stroke ?? "#1f2937";
     ctx.lineWidth = DEFAULT_PATH_STYLE.stroke_width;
@@ -102,7 +132,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
     ctx.lineJoin = "round";
     ctx.globalAlpha = 0.75;
     ctx.beginPath();
-    drawSmoothPath(ctx, pathPoints);
+    drawSmoothPath(ctx, finalizePathPoints(activePenStroke.points));
     ctx.stroke();
     ctx.restore();
   };
@@ -181,7 +211,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
           object_kind: "path",
           renderer_key: "core.path",
           transform: defaultTransform(),
-          geometry: { Path: { points: normalizePathPoints(input.points) } },
+          geometry: { Path: { points: finalizePathPoints(input.points) } },
           style: mergeStyle(DEFAULT_PATH_STYLE, input.style),
           metadata: input.metadata ?? null,
         }),
@@ -228,24 +258,40 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
 
   const onPointerDown = (event: PointerEvent): void => {
     if (destroyed || tool === "none") return;
-    options.canvas.setPointerCapture(event.pointerId);
+    if (event.isPrimary === false) return;
+    const id = pointerId(event);
     const point = canvasPoint(options.canvas, event);
     if (tool === "rect") {
+      capturePointer(options.canvas, id);
       dragStart = point;
     } else if (tool === "pen") {
-      pathPoints = appendPathPoint([], point);
+      if (activePenStroke) return;
+      capturePointer(options.canvas, id);
+      activePenStroke = {
+        pointerId: id,
+        points: appendPathPoint([], point),
+      };
       redraw(false);
     }
   };
 
   const onPointerMove = (event: PointerEvent): void => {
-    if (destroyed || tool !== "pen" || pathPoints.length === 0) return;
-    pathPoints = appendPathPoint(pathPoints, canvasPoint(options.canvas, event));
-    redraw(false);
+    if (destroyed || tool !== "pen" || !activePenStroke) return;
+    if (pointerId(event) !== activePenStroke.pointerId) return;
+
+    let nextPoints = activePenStroke.points;
+    for (const point of eventPoints(options.canvas, event)) {
+      nextPoints = appendPathPoint(nextPoints, point);
+    }
+    if (nextPoints !== activePenStroke.points) {
+      activePenStroke = { ...activePenStroke, points: nextPoints };
+      redraw(false);
+    }
   };
 
   const onPointerUp = (event: PointerEvent): void => {
     if (destroyed) return;
+    const id = pointerId(event);
     const point = canvasPoint(options.canvas, event);
     if (tool === "rect" && dragStart) {
       const x = Math.min(dragStart.x, point.x);
@@ -256,22 +302,32 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
         createRect({ x, y, width, height });
       }
       dragStart = null;
-    } else if (tool === "pen" && pathPoints.length > 1) {
-      const completedPath = normalizePathPoints(appendPathPoint(pathPoints, point));
-      pathPoints = [];
+      releasePointer(options.canvas, id);
+    } else if (tool === "pen" && activePenStroke && id === activePenStroke.pointerId) {
+      let completedPath = activePenStroke.points;
+      for (const eventPoint of eventPoints(options.canvas, event)) {
+        completedPath = appendPathPoint(completedPath, eventPoint);
+      }
+      activePenStroke = null;
       createPath({ points: completedPath });
-    } else if (tool === "pen") {
-      pathPoints = [];
-      redraw(false);
+      releasePointer(options.canvas, id);
     }
-    options.canvas.releasePointerCapture(event.pointerId);
+  };
+
+  const onPointerCancel = (event: PointerEvent): void => {
+    if (tool !== "pen" || !activePenStroke) return;
+    const id = pointerId(event);
+    if (id !== activePenStroke.pointerId) return;
+    activePenStroke = null;
+    redraw(false);
+    releasePointer(options.canvas, id);
   };
 
   options.canvas.style.touchAction = "none";
   options.canvas.addEventListener("pointerdown", onPointerDown);
   options.canvas.addEventListener("pointermove", onPointerMove);
   options.canvas.addEventListener("pointerup", onPointerUp);
-  options.canvas.addEventListener("pointercancel", onPointerUp);
+  options.canvas.addEventListener("pointercancel", onPointerCancel);
 
   render();
 
@@ -290,6 +346,10 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
     },
     exportDocumentJson: () => parseJson<unknown>(wasm.export_document_json()),
     setTool: (nextTool) => {
+      if (tool === "pen" && nextTool !== "pen" && activePenStroke) {
+        activePenStroke = null;
+        redraw(false);
+      }
       tool = nextTool;
       emitRuntimeEvent({ type: "tool-changed", tool });
     },
@@ -300,7 +360,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
       options.canvas.removeEventListener("pointerdown", onPointerDown);
       options.canvas.removeEventListener("pointermove", onPointerMove);
       options.canvas.removeEventListener("pointerup", onPointerUp);
-      options.canvas.removeEventListener("pointercancel", onPointerUp);
+      options.canvas.removeEventListener("pointercancel", onPointerCancel);
       wasm.free();
       emitRuntimeEvent({ type: "destroyed" });
     },
