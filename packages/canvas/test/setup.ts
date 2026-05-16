@@ -8,6 +8,7 @@ const context = {
   fill: noop,
   lineTo: noop,
   moveTo: noop,
+  quadraticCurveTo: noop,
   rect: noop,
   restore: noop,
   rotate: noop,

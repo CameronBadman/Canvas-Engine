@@ -1,3 +1,4 @@
+import { drawSmoothPath } from "./path";
 import type { Geometry, ObjectRenderer, RenderObject, Style } from "./types";
 
 function applyTransform(ctx: CanvasRenderingContext2D, object: RenderObject): void {
@@ -61,10 +62,7 @@ export const defaultRenderers: Record<string, ObjectRenderer> = {
     applyTransform(ctx, object);
     applyStyle(ctx, object.style);
     ctx.beginPath();
-    ctx.moveTo(points[0]!.x, points[0]!.y);
-    for (const point of points.slice(1)) {
-      ctx.lineTo(point.x, point.y);
-    }
+    drawSmoothPath(ctx, points);
     fillAndStroke(ctx, { ...object.style, fill: null });
     ctx.restore();
   },

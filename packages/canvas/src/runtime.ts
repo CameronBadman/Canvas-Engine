@@ -1,4 +1,5 @@
 import { WasmCanvasRuntime } from "@canvas-engine/core-wasm";
+import { appendPathPoint, drawSmoothPath, normalizePathPoints } from "./path";
 import { defaultRenderers } from "./renderers";
 import type {
   ApplyResult,
@@ -101,10 +102,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
     ctx.lineJoin = "round";
     ctx.globalAlpha = 0.75;
     ctx.beginPath();
-    ctx.moveTo(pathPoints[0]!.x, pathPoints[0]!.y);
-    for (const point of pathPoints.slice(1)) {
-      ctx.lineTo(point.x, point.y);
-    }
+    drawSmoothPath(ctx, pathPoints);
     ctx.stroke();
     ctx.restore();
   };
@@ -183,7 +181,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
           object_kind: "path",
           renderer_key: "core.path",
           transform: defaultTransform(),
-          geometry: { Path: { points: input.points } },
+          geometry: { Path: { points: normalizePathPoints(input.points) } },
           style: mergeStyle(DEFAULT_PATH_STYLE, input.style),
           metadata: input.metadata ?? null,
         }),
@@ -235,14 +233,14 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
     if (tool === "rect") {
       dragStart = point;
     } else if (tool === "pen") {
-      pathPoints = [point];
+      pathPoints = appendPathPoint([], point);
       redraw(false);
     }
   };
 
   const onPointerMove = (event: PointerEvent): void => {
     if (destroyed || tool !== "pen" || pathPoints.length === 0) return;
-    pathPoints.push(canvasPoint(options.canvas, event));
+    pathPoints = appendPathPoint(pathPoints, canvasPoint(options.canvas, event));
     redraw(false);
   };
 
@@ -259,8 +257,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
       }
       dragStart = null;
     } else if (tool === "pen" && pathPoints.length > 1) {
-      pathPoints.push(point);
-      const completedPath = pathPoints;
+      const completedPath = normalizePathPoints(appendPathPoint(pathPoints, point));
       pathPoints = [];
       createPath({ points: completedPath });
     } else if (tool === "pen") {

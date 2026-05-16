@@ -110,6 +110,15 @@ describe("createCanvasRuntime", () => {
     expect(emitted).toHaveLength(1);
     expect(emitted[0]!.event_type).toBe("object.created");
     expect(emitted[0]!.payload.object?.renderer_key).toBe("core.path");
+    expect(emitted[0]!.payload.object?.geometry).toEqual({
+      Path: {
+        points: [
+          { x: 10, y: 10 },
+          { x: 20, y: 20 },
+          { x: 40, y: 30 },
+        ],
+      },
+    });
     runtime.destroy();
   });
 });
