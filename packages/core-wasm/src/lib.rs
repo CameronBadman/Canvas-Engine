@@ -107,6 +107,11 @@ impl WasmCanvasRuntime {
         let mutation = encoding::mutation_from_binary(bytes).map_err(js_error)?;
         encoding::mutation_to_json(&mutation).map_err(js_error)
     }
+
+    pub fn decode_apply_result_binary_to_json(&self, bytes: &[u8]) -> Result<String, JsValue> {
+        let result = encoding::result_from_binary(bytes).map_err(js_error)?;
+        encoding::result_to_json(&result).map_err(js_error)
+    }
 }
 
 #[cfg(test)]

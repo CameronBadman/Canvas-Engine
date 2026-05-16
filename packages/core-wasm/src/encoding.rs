@@ -25,6 +25,10 @@ pub fn result_to_binary(result: &ApplyResult) -> Result<Vec<u8>, String> {
     bincode::serialize(result).map_err(|err| err.to_string())
 }
 
+pub fn result_from_binary(bytes: &[u8]) -> Result<ApplyResult, String> {
+    bincode::deserialize(bytes).map_err(|err| err.to_string())
+}
+
 pub fn document_to_binary(document: &CanvasDocument) -> Result<Vec<u8>, String> {
     bincode::serialize(document).map_err(|err| err.to_string())
 }
