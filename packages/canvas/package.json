@@ -20,6 +20,8 @@
   },
   "devDependencies": {
     "@vitest/browser": "^4.0.8",
-    "jsdom": "^27.1.0"
+    "jsdom": "^27.1.0",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.5.0"
   }
 }
