@@ -14,6 +14,7 @@ const context = {
   rotate: noop,
   save: noop,
   scale: noop,
+  setTransform: noop,
   stroke: noop,
   translate: noop,
   set fillStyle(_value: string) {},
@@ -22,6 +23,7 @@ const context = {
   set lineCap(_value: CanvasLineCap) {},
   set lineJoin(_value: CanvasLineJoin) {},
   set globalAlpha(_value: number) {},
+  set imageSmoothingEnabled(_value: boolean) {},
 };
 
 HTMLCanvasElement.prototype.getContext = function getContext() {

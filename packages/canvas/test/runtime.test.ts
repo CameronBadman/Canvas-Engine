@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createCanvasRuntime, type CanvasMutation } from "../src";
 
 function canvas(): HTMLCanvasElement {
@@ -7,6 +7,13 @@ function canvas(): HTMLCanvasElement {
   element.height = 500;
   document.body.appendChild(element);
   return element;
+}
+
+function setDevicePixelRatio(value: number): void {
+  Object.defineProperty(window, "devicePixelRatio", {
+    value,
+    configurable: true,
+  });
 }
 
 function pointerEvent(
@@ -37,6 +44,10 @@ function pointerEvent(
 }
 
 describe("createCanvasRuntime", () => {
+  afterEach(() => {
+    setDevicePixelRatio(1);
+  });
+
   it("emits local mutations through the callback", () => {
     const emitted: Array<{ mutation: CanvasMutation; binary: Uint8Array }> = [];
     const runtime = createCanvasRuntime({
@@ -246,6 +257,48 @@ describe("createCanvasRuntime", () => {
           { x: 16, y: 8 },
           { x: 24, y: 18 },
           { x: 32, y: 0 },
+        ],
+      },
+    });
+    runtime.destroy();
+  });
+
+  it("uses high-DPI backing pixels without changing pen coordinates", () => {
+    setDevicePixelRatio(2);
+    const emitted: CanvasMutation[] = [];
+    const element = canvas();
+    element.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 500,
+        width: 800,
+        height: 500,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    const runtime = createCanvasRuntime({
+      canvas: element,
+      documentId: "doc-pen-dpr",
+      actorId: "actor-a",
+      initialTool: "pen",
+      onMutation: (mutation) => emitted.push(mutation),
+    });
+
+    expect(element.width).toBe(1600);
+    expect(element.height).toBe(1000);
+
+    element.dispatchEvent(pointerEvent("pointerdown", 100, 120));
+    element.dispatchEvent(pointerEvent("pointerup", 100, 120));
+
+    expect(emitted[0]!.payload.object?.geometry).toEqual({
+      Path: {
+        points: [
+          { x: 99.75, y: 120 },
+          { x: 100.25, y: 120 },
         ],
       },
     });

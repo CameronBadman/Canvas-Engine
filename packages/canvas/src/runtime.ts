@@ -35,6 +35,11 @@ interface ActivePenStroke {
   points: Point[];
 }
 
+interface CanvasSurface {
+  logicalWidth: number;
+  logicalHeight: number;
+}
+
 function parseJson<T>(json: string): T {
   return JSON.parse(json) as T;
 }
@@ -61,10 +66,10 @@ function defaultTransform(x = 0, y = 0): Transform {
   };
 }
 
-function canvasPoint(canvas: HTMLCanvasElement, event: PointerEvent): Point {
+function canvasPoint(canvas: HTMLCanvasElement, surface: CanvasSurface, event: PointerEvent): Point {
   const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
+  const scaleX = surface.logicalWidth / rect.width;
+  const scaleY = surface.logicalHeight / rect.height;
   return {
     x: (event.clientX - rect.left) * scaleX,
     y: (event.clientY - rect.top) * scaleY,
@@ -75,9 +80,9 @@ function pointerId(event: PointerEvent): number {
   return Number.isFinite(event.pointerId) ? event.pointerId : 1;
 }
 
-function eventPoints(canvas: HTMLCanvasElement, event: PointerEvent): Point[] {
+function eventPoints(canvas: HTMLCanvasElement, surface: CanvasSurface, event: PointerEvent): Point[] {
   const events = event.getCoalescedEvents?.() ?? [event];
-  return events.map((coalescedEvent) => canvasPoint(canvas, coalescedEvent));
+  return events.map((coalescedEvent) => canvasPoint(canvas, surface, coalescedEvent));
 }
 
 function capturePointer(canvas: HTMLCanvasElement, id: number): void {
@@ -101,6 +106,33 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
   if (!ctx) {
     throw new Error("Canvas2D context is not available");
   }
+
+  const surface: CanvasSurface = {
+    logicalWidth: options.canvas.width || 300,
+    logicalHeight: options.canvas.height || 150,
+  };
+
+  const configureCanvasSurface = (): void => {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const backingWidth = Math.max(1, Math.round(surface.logicalWidth * dpr));
+    const backingHeight = Math.max(1, Math.round(surface.logicalHeight * dpr));
+
+    if (!options.canvas.style.width) {
+      options.canvas.style.width = `${surface.logicalWidth}px`;
+    }
+    if (!options.canvas.style.height) {
+      options.canvas.style.height = `${surface.logicalHeight}px`;
+    }
+    if (options.canvas.width !== backingWidth) {
+      options.canvas.width = backingWidth;
+    }
+    if (options.canvas.height !== backingHeight) {
+      options.canvas.height = backingHeight;
+    }
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+  };
 
   const wasm = new WasmCanvasRuntime(options.documentId, options.actorId);
   const renderers: Record<string, ObjectRenderer> = {
@@ -138,8 +170,9 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
   };
 
   const redraw = (emitRenderedEvent: boolean): void => {
+    configureCanvasSurface();
     const objects = parseJson<RenderObject[]>(wasm.get_render_objects_json());
-    ctx.clearRect(0, 0, options.canvas.width, options.canvas.height);
+    ctx.clearRect(0, 0, surface.logicalWidth, surface.logicalHeight);
     for (const object of objects) {
       const renderer = renderers[object.renderer_key];
       if (renderer) {
@@ -260,7 +293,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
     if (destroyed || tool === "none") return;
     if (event.isPrimary === false) return;
     const id = pointerId(event);
-    const point = canvasPoint(options.canvas, event);
+    const point = canvasPoint(options.canvas, surface, event);
     if (tool === "rect") {
       capturePointer(options.canvas, id);
       dragStart = point;
@@ -280,7 +313,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
     if (pointerId(event) !== activePenStroke.pointerId) return;
 
     let nextPoints = activePenStroke.points;
-    for (const point of eventPoints(options.canvas, event)) {
+    for (const point of eventPoints(options.canvas, surface, event)) {
       nextPoints = appendPathPoint(nextPoints, point);
     }
     if (nextPoints !== activePenStroke.points) {
@@ -292,7 +325,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
   const onPointerUp = (event: PointerEvent): void => {
     if (destroyed) return;
     const id = pointerId(event);
-    const point = canvasPoint(options.canvas, event);
+    const point = canvasPoint(options.canvas, surface, event);
     if (tool === "rect" && dragStart) {
       const x = Math.min(dragStart.x, point.x);
       const y = Math.min(dragStart.y, point.y);
@@ -305,7 +338,7 @@ export function createCanvasRuntime(options: CreateCanvasRuntimeOptions): Canvas
       releasePointer(options.canvas, id);
     } else if (tool === "pen" && activePenStroke && id === activePenStroke.pointerId) {
       let completedPath = activePenStroke.points;
-      for (const eventPoint of eventPoints(options.canvas, event)) {
+      for (const eventPoint of eventPoints(options.canvas, surface, event)) {
         completedPath = appendPathPoint(completedPath, eventPoint);
       }
       activePenStroke = null;
